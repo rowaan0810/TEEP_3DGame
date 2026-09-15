@@ -3,6 +3,7 @@
 
 using UnityEngine;
 using EndlessRunner.Core;
+using EndlessRunner.Obstacles;
 
 namespace EndlessRunner.Player
 {
@@ -12,9 +13,6 @@ namespace EndlessRunner.Player
     /// </summary>
     public class PlayerCollision : MonoBehaviour
     {
-        [Header("Settings")]
-        [SerializeField] private string obstacleTag = "Obstacle";
-
         /// <summary>
         /// Whether the player is currently shielded (from Pose Challenge power-up).
         /// When shielded, the first collision is absorbed instead of ending the game.
@@ -26,20 +24,27 @@ namespace EndlessRunner.Player
             if (GameManager.Instance == null || GameManager.Instance.State != GameState.Playing)
                 return;
 
-            if (other.CompareTag(obstacleTag))
+            // Check if it's an obstacle (by component or tag)
+            bool isObstacle = other.GetComponent<Obstacle>() != null
+                           || other.GetComponentInParent<Obstacle>() != null;
+
+            // Also check tag as fallback
+            if (!isObstacle)
+            {
+                try { isObstacle = other.CompareTag("Obstacle"); }
+                catch { /* Tag doesn't exist */ }
+            }
+
+            if (isObstacle)
             {
                 if (IsShielded)
                 {
-                    // Shield absorbs the hit
                     IsShielded = false;
                     Debug.Log("Shield absorbed a collision!");
-
-                    // Optionally destroy/disable the obstacle that was hit
                     other.gameObject.SetActive(false);
                     return;
                 }
 
-                // Game over
                 Debug.Log($"Player hit obstacle: {other.gameObject.name}");
                 GameManager.Instance.TriggerGameOver();
             }

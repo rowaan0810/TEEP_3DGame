@@ -1,12 +1,14 @@
 // SceneSetup.cs — Auto-creates the scene hierarchy for the game.
-// Attach this to an empty GameObject in a fresh scene, enter Play Mode,
-// and it builds the entire game setup: player, camera, track, managers.
+// Builds: player, camera, track, obstacle spawner, UI (HUD, menus).
 
 using UnityEngine;
+using UnityEngine.UI;
 using EndlessRunner.Core;
 using EndlessRunner.Input;
 using EndlessRunner.Player;
 using EndlessRunner.Track;
+using EndlessRunner.Obstacles;
+using EndlessRunner.UI;
 
 namespace EndlessRunner
 {
@@ -28,13 +30,10 @@ namespace EndlessRunner
         }
 
         /// <summary>
-        /// Find a shader that actually works. Unity 6 URP doesn't expose
-        /// "Universal Render Pipeline/Lit" to Shader.Find at runtime unless
-        /// a material referencing it exists in the project.
+        /// Find a shader that actually works in Unity 6 URP at runtime.
         /// </summary>
-        private static Shader FindWorkingShader()
+        public static Shader FindWorkingShader()
         {
-            // Try multiple shaders in order of preference
             string[] candidates = {
                 "Universal Render Pipeline/Lit",
                 "Universal Render Pipeline/Simple Lit",
@@ -48,36 +47,23 @@ namespace EndlessRunner
             {
                 Shader s = Shader.Find(name);
                 if (s != null && s.name != "Hidden/InternalErrorShader")
-                {
-                    Debug.Log($"Using shader: {s.name}");
                     return s;
-                }
             }
 
-            // Last resort — grab the shader from an existing renderer in the scene
             Renderer existingRenderer = FindFirstObjectByType<Renderer>();
             if (existingRenderer != null && existingRenderer.sharedMaterial != null)
-            {
-                Debug.Log($"Using shader from existing renderer: {existingRenderer.sharedMaterial.shader.name}");
                 return existingRenderer.sharedMaterial.shader;
-            }
 
-            Debug.LogWarning("Could not find any working shader!");
             return Shader.Find("Unlit/Color");
         }
 
-        private static Material CreateMaterial(Color color)
+        public static Material CreateMaterial(Color color)
         {
             Shader shader = FindWorkingShader();
             Material mat = new Material(shader);
-
-            // Try to set color via common property names
-            if (mat.HasProperty("_BaseColor"))
-                mat.SetColor("_BaseColor", color);  // URP
-            else if (mat.HasProperty("_Color"))
-                mat.SetColor("_Color", color);       // Standard/Legacy
-            
-            mat.color = color; // Fallback for .color property
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
+            mat.color = color;
             return mat;
         }
 
@@ -89,77 +75,62 @@ namespace EndlessRunner
             // --- Game Managers ---
             GameObject managers = CreateOrFind("GameManagers");
 
-            // GameManager
-            GameManager gm = managers.GetComponent<GameManager>();
-            if (gm == null) gm = managers.AddComponent<GameManager>();
+            GameManager gm = EnsureComponent<GameManager>(managers);
+            GameSpeed gs = EnsureComponent<GameSpeed>(managers);
+            InputManager im = EnsureComponent<InputManager>(managers);
+            KeyboardInput ki = EnsureComponent<KeyboardInput>(managers);
 
-            // GameSpeed
-            GameSpeed gs = managers.GetComponent<GameSpeed>();
-            if (gs == null) gs = managers.AddComponent<GameSpeed>();
-
-            // InputManager + KeyboardInput
-            InputManager im = managers.GetComponent<InputManager>();
-            if (im == null) im = managers.AddComponent<InputManager>();
-            KeyboardInput ki = managers.GetComponent<KeyboardInput>();
-            if (ki == null) ki = managers.AddComponent<KeyboardInput>();
-
-            // Wire up InputManager's keyboardInput field via reflection
             SetPrivateField(im, "keyboardInput", ki);
 
             // --- Player ---
             GameObject player = CreateOrFind("Player");
             player.transform.position = new Vector3(0f, 0.5f, 0f);
-
-            // Ensure "Obstacle" tag exists — if not, we'll use layer-based detection
             try { player.tag = "Player"; } catch { }
 
-            // Player visual: use a primitive capsule
-            MeshFilter mf = player.GetComponent<MeshFilter>();
-            if (mf == null) mf = player.AddComponent<MeshFilter>();
-            MeshRenderer mr = player.GetComponent<MeshRenderer>();
-            if (mr == null) mr = player.AddComponent<MeshRenderer>();
+            MeshFilter mf = EnsureComponent<MeshFilter>(player);
+            MeshRenderer mr = EnsureComponent<MeshRenderer>(player);
 
-            // Grab the capsule mesh from a temp primitive
             GameObject tempCapsule = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             mf.sharedMesh = tempCapsule.GetComponent<MeshFilter>().sharedMesh;
             DestroyImmediate(tempCapsule);
 
-            // Player material — green
             mr.material = CreateMaterial(new Color(0.2f, 0.85f, 0.4f));
 
-            // Collider — CapsuleCollider as trigger
-            CapsuleCollider cc = player.GetComponent<CapsuleCollider>();
-            if (cc == null) cc = player.AddComponent<CapsuleCollider>();
+            CapsuleCollider cc = EnsureComponent<CapsuleCollider>(player);
             cc.isTrigger = true;
             cc.height = 2f;
             cc.radius = 0.5f;
             cc.center = Vector3.zero;
 
-            // Rigidbody — kinematic, we handle movement manually
-            Rigidbody rb = player.GetComponent<Rigidbody>();
-            if (rb == null) rb = player.AddComponent<Rigidbody>();
+            Rigidbody rb = EnsureComponent<Rigidbody>(player);
             rb.isKinematic = true;
             rb.useGravity = false;
 
-            // PlayerController
-            PlayerController pc = player.GetComponent<PlayerController>();
-            if (pc == null) pc = player.AddComponent<PlayerController>();
+            PlayerController pc = EnsureComponent<PlayerController>(player);
             SetPrivateField(pc, "playerCollider", cc);
 
-            // PlayerCollision
-            PlayerCollision pcol = player.GetComponent<PlayerCollision>();
-            if (pcol == null) pcol = player.AddComponent<PlayerCollision>();
-
-            // PlayerAnimator
-            PlayerAnimator pa = player.GetComponent<PlayerAnimator>();
-            if (pa == null) pa = player.AddComponent<PlayerAnimator>();
+            PlayerCollision pcol = EnsureComponent<PlayerCollision>(player);
+            PlayerAnimator pa = EnsureComponent<PlayerAnimator>(player);
             SetPrivateField(pa, "playerController", pc);
             SetPrivateField(pa, "meshRenderer", mr);
 
             // --- Track ---
             GameObject trackParent = CreateOrFind("TrackManager");
-            TrackManager tm = trackParent.GetComponent<TrackManager>();
-            if (tm == null) tm = trackParent.AddComponent<TrackManager>();
+            TrackManager tm = EnsureComponent<TrackManager>(trackParent);
+
+            // --- Obstacle Spawner ---
+            GameObject spawnerObj = CreateOrFind("ObstacleSpawner");
+            ObstacleSpawner spawner = EnsureComponent<ObstacleSpawner>(spawnerObj);
+
+            // --- Ensure "Obstacle" tag exists ---
+            // The tag must be created in Unity Editor: Edit > Project Settings > Tags
+            // For now, PlayerCollision also checks by component if tag is missing.
+
+            // --- UI ---
+            GameObject uiObj = CreateOrFind("UIManager");
+            EnsureComponent<GameHUD>(uiObj);
+            EnsureComponent<GameOverScreen>(uiObj);
+            EnsureComponent<MainMenu>(uiObj);
 
             // --- Camera ---
             Camera mainCam = Camera.main;
@@ -169,17 +140,15 @@ namespace EndlessRunner
                 mainCam.transform.rotation = Quaternion.Euler(20f, 0f, 0f);
                 mainCam.fieldOfView = 60f;
                 mainCam.clearFlags = CameraClearFlags.SolidColor;
-                mainCam.backgroundColor = new Color(0.4f, 0.6f, 0.9f); // Light blue sky
+                mainCam.backgroundColor = new Color(0.4f, 0.6f, 0.9f);
             }
 
-            // --- Directional Light ---
+            // --- Lighting ---
             Light[] lights = FindObjectsByType<Light>(FindObjectsSortMode.None);
-            bool hasDirectionalLight = false;
+            bool hasDirectional = false;
             foreach (var l in lights)
-            {
-                if (l.type == LightType.Directional) { hasDirectionalLight = true; break; }
-            }
-            if (!hasDirectionalLight)
+                if (l.type == LightType.Directional) { hasDirectional = true; break; }
+            if (!hasDirectional)
             {
                 GameObject lightObj = new GameObject("Directional Light");
                 Light light = lightObj.AddComponent<Light>();
@@ -189,12 +158,22 @@ namespace EndlessRunner
                 lightObj.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
             }
 
-            // --- Quick Start ---
-            var starter = managers.GetComponent<AutoStart>();
-            if (starter == null) starter = managers.AddComponent<AutoStart>();
+            // --- Event System for UI ---
+            if (FindFirstObjectByType<UnityEngine.EventSystems.EventSystem>() == null)
+            {
+                GameObject esObj = new GameObject("EventSystem");
+                esObj.AddComponent<UnityEngine.EventSystems.EventSystem>();
+                esObj.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+            }
 
-            Debug.Log("=== Scene setup complete! Game auto-starts in 0.5s ===");
-            Debug.Log("Controls: Arrow keys or WASD to move, Space/Up to jump, Down/S to duck, R to restart");
+            Debug.Log("=== Scene setup complete! Main menu will appear. ===");
+        }
+
+        private static T EnsureComponent<T>(GameObject obj) where T : Component
+        {
+            T comp = obj.GetComponent<T>();
+            if (comp == null) comp = obj.AddComponent<T>();
+            return comp;
         }
 
         private static void SetPrivateField(object target, string fieldName, object value)
@@ -202,13 +181,7 @@ namespace EndlessRunner
             var field = target.GetType().GetField(fieldName,
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             if (field != null)
-            {
                 field.SetValue(target, value);
-            }
-            else
-            {
-                Debug.LogWarning($"Could not find field '{fieldName}' on {target.GetType().Name}");
-            }
         }
 
         private GameObject CreateOrFind(string name)
@@ -216,51 +189,6 @@ namespace EndlessRunner
             GameObject obj = GameObject.Find(name);
             if (obj == null) obj = new GameObject(name);
             return obj;
-        }
-    }
-
-    /// <summary>
-    /// Auto-starts the game after a short delay and handles restart.
-    /// </summary>
-    public class AutoStart : MonoBehaviour
-    {
-        [SerializeField] private float startDelay = 0.5f;
-
-        private void Start()
-        {
-            Invoke(nameof(DoStart), startDelay);
-        }
-
-        private void DoStart()
-        {
-            if (GameManager.Instance != null && GameManager.Instance.State == GameState.Menu)
-            {
-                GameManager.Instance.StartGame();
-                Debug.Log("Auto-started game! Use arrow keys / WASD to play.");
-            }
-        }
-
-        private void Update()
-        {
-            // R to restart after game over
-            if (GameManager.Instance != null &&
-                GameManager.Instance.State == GameState.GameOver &&
-                UnityEngine.Input.GetKeyDown(KeyCode.R))
-            {
-                var player = FindFirstObjectByType<PlayerController>();
-                if (player != null) player.ResetPlayer();
-                GameManager.Instance.RestartGame();
-            }
-
-            // Escape to quit
-            if (UnityEngine.Input.GetKeyDown(KeyCode.Escape))
-            {
-                #if UNITY_EDITOR
-                UnityEditor.EditorApplication.isPlaying = false;
-                #else
-                Application.Quit();
-                #endif
-            }
         }
     }
 }
